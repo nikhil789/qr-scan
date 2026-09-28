@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Mobile QR Scanner & Data Collector</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- html5-qrcode Library CDN -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <!-- SheetJS (xlsx) CDN for Excel Export -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        /* Camera Frame and Scan Overlay */
+        #reader {
+            border: none !important;
+            width: 100% !important;
+            background: #0f172a;
+        }
+        #reader video {
+            object-fit: cover !important;
+            border-radius: 0.75rem;
+            width: 100% !important;
+            max-height: 40vh;
+        }
+        #reader__dashboard_section_csr, #reader__status_span, #reader__header_message {
+            display: none !important;
+        }
+
+        /* Mobile touch scrolling enhancements */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 4px;
+            height: 4px;
+        }
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: #1e293b;
+        }
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #475569;
+            border-radius: 2px;
+        }
+
+        /* Scan Line Animation */
+        @keyframes scan {
+            0% { top: 5%; opacity: 0.4; }
+            50% { opacity: 1; }
+            100% { top: 90%; opacity: 0.4; }
+        }
+        .scan-line {
+            position: absolute;
+            left: 5%;
+            right: 5%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #10b981, transparent);
+            box-shadow: 0 0 12px #10b981;
+            animation: scan 2s infinite ease-in-out;
+        }
+    </style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col justify-between select-none">
+
+    <!-- Top Header Navigation -->
+    <header class="bg-slate-900/90 backdrop-blur border-b border-slate-800 sticky top-0 z-30 px-4 py-3">
+        <div class="max-w-6xl mx-auto flex items-center justify-between">
+            <div class="flex items-center space-x-2.5">
+                <div class="p-2 bg-indigo-600 text-white rounded-xl shadow-md shadow-indigo-600/30">
+                    <i class="fa-solid fa-qrcode text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="text-base font-bold leading-tight">Mobile QR Collector</h1>
+                    <p class="text-[11px] text-slate-400">Scan pipe-delimited data to Excel</p>
+                </div>
+            </div>
+
+            <div class="flex items-center space-x-2">
+                <span class="text-xs px-2.5 py-1 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-medium">
+                    Total: <span id="total-badge" class="text-indigo-400 font-bold">0</span>
+                </span>
+                <button id="toggle-audio-btn" class="p-2 rounded-lg bg-slate-800 text-slate-300 border border-slate-700 active:scale-95 transition">
+                    <i id="audio-icon" class="fa-solid fa-volume-high text-emerald-400"></i>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Grid -->
+    <main class="flex-1 max-w-6xl w-full mx-auto p-3 sm:p-5 grid grid-cols-1 lg:grid-cols-12 gap-4">
+
+        <!-- Left Column: Camera Viewfinder and Controls -->
+        <section class="lg:col-span-5 flex flex-col gap-3">
+            <div class="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 shadow-xl flex flex-col gap-3">
+                
+                <!-- Viewfinder Header -->
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-camera text-indigo-400"></i>
+                        <span class="text-xs font-semibold text-slate-300">Camera Viewfinder</span>
+                    </div>
+                    <span id="camera-status" class="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-medium">
+                        Stopped
+                    </span>
+                </div>
+
+                <!-- Scanner Viewport Area -->
+                <div class="relative w-full bg-slate-950 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center min-h-[220px]">
+                    <div id="reader" class="w-full"></div>
+                    
+                    <div id="scan-overlay" class="hidden absolute inset-0 pointer-events-none flex flex-col items-center justify-center">
+                        <div class="w-44 h-44 sm:w-52 sm:h-52 border-2 border-dashed border-emerald-400/70 rounded-2xl relative">
+                            <div class="scan-line"></div>
+                        </div>
+                        <p class="text-[11px] text-emerald-300 bg-slate-950/80 px-3 py-1 rounded-full mt-2.5 backdrop-blur">
+                            Align QR code inside box
+                        </p>
+                    </div>
+
+                    <div id="camera-placeholder" class="flex flex-col items-center justify-center p-6 text-center text-slate-500">
+                        <i class="fa-solid fa-video-slash text-3xl mb-2 text-slate-600"></i>
+                        <p class="text-xs">Camera is offline</p>
+                    </div>
+                </div>
+
+                <!-- Camera Controls for Mobile -->
+                <div class="grid grid-cols-2 gap-2">
+                    <button id="start-btn" class="py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 active:scale-95 text-white font-medium rounded-xl text-xs transition flex items-center justify-center gap-2 shadow-lg shadow-indigo-600/20">
+                        <i class="fa-solid fa-play"></i> Start Scan
+                    </button>
+                    <button id="stop-btn" class="py-2.5 px-3 bg-slate-800 hover:bg-slate-700 active:scale-95 text-slate-300 font-medium rounded-xl text-xs transition flex items-center justify-center gap-2 disabled:opacity-40 disabled:pointer-events-none" disabled>
+                        <i class="fa-solid fa-stop"></i> Stop Scan
+                    </button>
+                </div>
+
+                <!-- Camera Switcher & Options -->
+                <div class="flex items-center justify-between gap-2 pt-2 border-t border-slate-800 text-xs">
+                    <div class="flex-1">
+                        <select id="camera-select" class="w-full bg-slate-950 border border-slate-800 text-slate-300 text-xs rounded-lg p-2 focus:outline-none">
+                            <option value="environment">Rear Camera (Default)</option>
+                            <option value="user">Front Camera</option>
+                        </select>
+                    </div>
+                    <label for="file-input" class="py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs cursor-pointer flex items-center gap-1.5 active:scale-95 transition whitespace-nowrap">
+                        <i class="fa-solid fa-image text-indigo-400"></i> File
+                    </label>
+                    <input type="file" id="file-input" accept="image/*" class="hidden">
+                </div>
+            </div>
+
+            <!-- Configuration Card -->
+            <div class="bg-slate-900 rounded-2xl p-3.5 border border-slate-800 shadow-xl space-y-2.5">
+                <div class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                    <i class="fa-solid fa-sliders text-indigo-400"></i> Settings
+                </div>
+                <div class="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                        <label class="block text-slate-400 mb-1 text-[11px]">Delimiter</label>
+                        <input type="text" id="delimiter-input" value="|" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-center text-slate-200 font-mono font-bold focus:outline-none focus:border-indigo-500">
+                    </div>
+                    <div>
+                        <label class="block text-slate-400 mb-1 text-[11px]">Scan Delay (ms)</label>
+                        <input type="number" id="delay-input" value="1800" step="200" min="500" class="w-full bg-slate-950 border border-slate-800 rounded-lg p-2 text-center text-slate-200 focus:outline-none focus:border-indigo-500">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- Right Column: Data Table View -->
+        <section class="lg:col-span-7 flex flex-col gap-3">
+            <div class="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl flex flex-col h-full overflow-hidden">
+                
+                <!-- Table Action Bar -->
+                <div class="p-3.5 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 bg-slate-900/50">
+                    <div class="flex items-center gap-2">
+                        <h2 class="font-semibold text-xs text-slate-200">Scanned Records</h2>
+                        <span id="row-count" class="bg-indigo-950 text-indigo-400 border border-indigo-800/60 text-[10px] font-bold px-2 py-0.5 rounded-full">0</span>
+                    </div>
+
+                    <div class="flex items-center gap-1.5">
+                        <button id="export-btn" class="bg-emerald-600 hover:bg-emerald-500 active:scale-95 text-white px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 shadow-md shadow-emerald-600/20">
+                            <i class="fa-solid fa-file-excel"></i> Export
+                        </button>
+                        <button id="clear-btn" class="bg-slate-800 hover:bg-rose-600/80 text-slate-300 hover:text-white active:scale-95 px-2.5 py-1.5 rounded-lg text-xs transition">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Table Content Container -->
+                <div class="flex-1 overflow-x-auto min-h-[300px] max-h-[55vh] lg:max-h-none custom-scrollbar relative">
+                    <table class="w-full text-left border-collapse text-xs">
+                        <thead>
+                            <tr id="table-header-row" class="bg-slate-950 text-slate-400 font-semibold uppercase text-[10px] tracking-wider border-b border-slate-800 sticky top-0 z-10 backdrop-blur">
+                                <th class="p-2.5 w-10 text-center">#</th>
+                                <th class="p-2.5 w-20">Time</th>
+                                <th class="p-2.5">ID / Key</th>
+                                <th class="p-2.5">Field 2</th>
+                                <th class="p-2.5">Field 3</th>
+                                <th class="p-2.5 text-right w-12"></th>
+                            </tr>
+                        </thead>
+                        <tbody id="table-body" class="divide-y divide-slate-800/60 text-slate-300 font-normal">
+                            <!-- Rows injected here dynamically -->
+                        </tbody>
+                    </table>
+
+                    <!-- Empty Placeholder -->
+                    <div id="empty-state" class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center text-slate-500 pointer-events-none">
+                        <i class="fa-solid fa-list-check text-3xl mb-2 text-slate-700"></i>
+                        <p class="text-xs font-medium text-slate-400">No scanned items yet</p>
+                        <p class="text-[11px] text-slate-600 mt-0.5">Start scanning QR codes to fill the table.</p>
+                    </div>
+                </div>
+
+                <div class="p-2.5 bg-slate-950/80 border-t border-slate-800 text-[10px] text-slate-500 flex justify-between items-center">
+                    <span>Delimiter: '|'</span>
+                    <span id="last-scanned">Last Scan: None</span>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Duplicate Warning Modal -->
+    <div id="duplicate-modal" class="hidden fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl max-w-sm w-full p-5 shadow-2xl relative text-center">
+            <div class="w-12 h-12 rounded-full bg-amber-500/20 text-amber-400 flex items-center justify-center mb-3 mx-auto text-xl">
+                <i class="fa-solid fa-triangle-exclamation"></i>
+            </div>
+            <h3 class="text-base font-bold text-slate-100">Duplicate Entry Detected</h3>
+            <p class="text-xs text-slate-400 mt-1">
+                An item with Key ID <span id="dup-key-text" class="font-mono text-amber-400 font-bold px-1.5 py-0.5 bg-slate-950 rounded"></span> already exists in your table.
+            </p>
+
+            <div class="my-3 bg-slate-950 rounded-lg p-2.5 text-left text-[11px] font-mono text-slate-400 border border-slate-800 break-all max-h-20 overflow-y-auto" id="dup-raw-text"></div>
+
+            <div class="flex gap-2 mt-4">
+                <button id="dup-discard-btn" class="flex-1 py-2 px-3 bg-slate-800 hover:bg-slate-700 text-slate-200 font-medium rounded-xl text-xs transition">
+                    Discard
+                </button>
+                <button id="dup-add-btn" class="flex-1 py-2 px-3 bg-amber-600 hover:bg-amber-500 text-white font-medium rounded-xl text-xs transition shadow-md shadow-amber-600/20">
+                    Add Duplicate
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast Notification -->
+    <div id="toast" class="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 transform translate-y-20 opacity-0 transition-all duration-300 bg-slate-900 border border-slate-700 text-slate-200 px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-2 max-w-[90vw]">
+        <i id="toast-icon" class="fa-solid fa-circle-check text-emerald-400 text-sm"></i>
+        <span id="toast-msg" class="text-xs font-medium truncate">Message</span>
+    </div>
+
+    <script>
+        // --- State Variables ---
+        let html5QrCode = null;
+        let isScanning = false;
+        let scannedData = [];
+        let maxColumns = 3;
+        let lastScannedText = null;
+        let lastScannedTime = 0;
+        let pendingDuplicate = null;
+        let audioEnabled = true;
+
+        // Audio Context Synthesizer
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+        // --- DOM References ---
+        const startBtn = document.getElementById('start-btn');
+        const stopBtn = document.getElementById('stop-btn');
+        const cameraSelect = document.getElementById('camera-select');
+        const fileInput = document.getElementById('file-input');
+        const cameraStatus = document.getElementById('camera-status');
+        const scanOverlay = document.getElementById('scan-overlay');
+        const cameraPlaceholder = document.getElementById('camera-placeholder');
+        const tableHeaderRow = document.getElementById('table-header-row');
+        const tableBody = document.getElementById('table-body');
+        const emptyState = document.getElementById('empty-state');
+        const rowCount = document.getElementById('row-count');
+        const totalBadge = document.getElementById('total-badge');
+        const lastScanned = document.getElementById('last-scanned');
+        const exportBtn = document.getElementById('export-btn');
+        const clearBtn = document.getElementById('clear-btn');
+        const toggleAudioBtn = document.getElementById('toggle-audio-btn');
+        const audioIcon = document.getElementById('audio-icon');
+        const duplicateModal = document.getElementById('duplicate-modal');
+        const dupKeyText = document.getElementById('dup-key-text');
+        const dupRawText = document.getElementById('dup-raw-text');
+        const dupDiscardBtn = document.getElementById('dup-discard-btn');
+        const dupAddBtn = document.getElementById('dup-add-btn');
+
+        // --- Initialization ---
+        window.addEventListener('DOMContentLoaded', () => {
+            setupEventListeners();
+            loadAvailableCameras();
+            renderTable();
+        });
+
+        // --- Audio Synthesizer Beeps ---
+        function playBeep(type = 'success') {
+            if (!audioEnabled) return;
+            try {
+                if (audioCtx.state === 'suspended') audioCtx.resume();
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+
+                if (type === 'success') {
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(1200, audioCtx.currentTime + 0.12);
+                    gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.15);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.15);
+                } else if (type === 'warning') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(280, audioCtx.currentTime);
+                    osc.frequency.setValueAtTime(180, audioCtx.currentTime + 0.1);
+                    gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.25);
+                    osc.start();
+                    osc.stop(audioCtx.currentTime + 0.25);
+                }
+            } catch (e) {
+                console.warn("Audio Context Error", e);
+            }
+        }
+
+        // --- Camera Management ---
+        async function loadAvailableCameras() {
+            try {
+                const devices = await Html5Qrcode.getCameras();
+                if (devices && devices.length > 0) {
+                    cameraSelect.innerHTML = '';
+                    devices.forEach((device, i) => {
+                        const opt = document.createElement('option');
+                        opt.value = device.id;
+                        opt.text = device.label || `Camera ${i + 1}`;
+                        if (device.label.toLowerCase().includes('back') || device.label.toLowerCase().includes('environment')) {
+                            opt.selected = true;
+                        }
+                        cameraSelect.appendChild(opt);
+                    });
+                }
+            } catch (err) {
+                console.log("Using default camera constraints");
+            }
+        }
+
+        async function startScanner() {
+            if (isScanning) return;
+            html5QrCode = new Html5Qrcode("reader");
+
+            const selectedCam = cameraSelect.value;
+            const cameraConfig = (selectedCam === 'environment' || selectedCam === 'user') 
+                ? { facingMode: selectedCam } 
+                : selectedCam;
+
+            const config = {
+                fps: 12,
+                qrbox: { width: 200, height: 200 },
+                aspectRatio: 1.0
+            };
+
+            try {
+                cameraPlaceholder.classList.add('hidden');
+                scanOverlay.classList.remove('hidden');
+
+                await html5QrCode.start(
+                    cameraConfig,
+                    config,
+                    onScanSuccess,
+                    onScanError
+                );
+
+                isScanning = true;
+                startBtn.disabled = true;
+                stopBtn.disabled = false;
+                cameraStatus.textContent = "Scanning";
+                cameraStatus.className = "text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 font-medium animate-pulse";
+            } catch (err) {
+                console.error("Camera start failed:", err);
+                showToast("Failed to open camera. Check permissions.", "error");
+                cameraPlaceholder.classList.remove('hidden');
+                scanOverlay.classList.add('hidden');
+            }
+        }
+
+        async function stopScanner() {
+            if (!isScanning || !html5QrCode) return;
+
+            try {
+                await html5QrCode.stop();
+                html5QrCode.clear();
+                isScanning = false;
+                startBtn.disabled = false;
+                stopBtn.disabled = true;
+                scanOverlay.classList.add('hidden');
+                cameraPlaceholder.classList.remove('hidden');
+                cameraStatus.textContent = "Stopped";
+                cameraStatus.className = "text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 font-medium";
+            } catch (err) {
+                console.error("Stop camera error:", err);
+            }
+        }
+
+        // --- Scanning & Parsing Logic ---
+        function onScanSuccess(decodedText) {
+            const now = Date.now();
+            const delay = parseInt(document.getElementById('delay-input').value) || 1800;
+
+            if (decodedText === lastScannedText && (now - lastScannedTime) < delay) {
+                return; // Cooldown bypass
+            }
+
+            lastScannedText = decodedText;
+            lastScannedTime = now;
+
+            processScannedText(decodedText);
+        }
+
+        function onScanError(err) {
+            // Continuous scanning loop frame drop
+        }
+
+        function processScannedText(rawText) {
+            const delimiter = document.getElementById('delimiter-input').value || '|';
+            const terms = rawText.split(delimiter).map(t => t.trim());
+
+            if (!terms.length || terms[0] === '') {
+                showToast("Empty QR content", "error");
+                return;
+            }
+
+            const uniqueKey = terms[0];
+            const isDuplicate = scannedData.some(row => row.fields[0] === uniqueKey);
+
+            if (isDuplicate) {
+                playBeep('warning');
+                pendingDuplicate = { rawText, terms };
+                dupKeyText.textContent = uniqueKey;
+                dupRawText.textContent = rawText;
+                duplicateModal.classList.remove('hidden');
+            } else {
+                addRecord(terms);
+                playBeep('success');
+                showToast(`Scanned: ${uniqueKey}`);
+            }
+        }
+
+        function addRecord(terms) {
+            const timeStr = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+            scannedData.unshift({
+                id: Date.now(),
+                timestamp: timeStr,
+                fields: terms
+            });
+
+            if (terms.length > maxColumns) {
+                maxColumns = terms.length;
+            }
+
+            lastScanned.textContent = `Last Scan: ${timeStr}`;
+            renderTable();
+        }
+
+        // --- Table Rendering ---
+        function renderTable() {
+            // Update Headers Dynamically
+            let headerHTML = `
+                <th class="p-2.5 w-8 text-center">#</th>
+                <th class="p-2.5 w-20">Time</th>
+            `;
+            for (let i = 0; i < maxColumns; i++) {
+                const title = i === 0 ? "Key ID" : `Field ${i + 1}`;
+                headerHTML += `<th class="p-2.5">${title}</th>`;
+            }
+            headerHTML += `<th class="p-2.5 text-right w-10"></th>`;
+            tableHeaderRow.innerHTML = headerHTML;
+
+            // Update Rows
+            if (scannedData.length === 0) {
+                tableBody.innerHTML = '';
+                emptyState.classList.remove('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+                tableBody.innerHTML = scannedData.map((item, idx) => {
+                    let fieldsHTML = '';
+                    for (let i = 0; i < maxColumns; i++) {
+                        const val = item.fields[i] !== undefined ? item.fields[i] : '';
+                        const isKey = i === 0;
+                        fieldsHTML += `
+                            <td class="p-2.5 ${isKey ? 'font-semibold text-indigo-300 font-mono' : 'text-slate-300'} whitespace-nowrap">
+                                ${escapeHTML(val)}
+                            </td>
+                        `;
+                    }
+
+                    return `
+                        <tr class="hover:bg-slate-800/50 transition border-b border-slate-800/60">
+                            <td class="p-2.5 text-center text-slate-500 font-mono text-[10px]">${scannedData.length - idx}</td>
+                            <td class="p-2.5 text-slate-400 whitespace-nowrap text-[11px]">${item.timestamp}</td>
+                            ${fieldsHTML}
+                            <td class="p-2.5 text-right">
+                                <button onclick="deleteRow(${item.id})" class="p-1 text-slate-500 hover:text-rose-400 transition">
+                                    <i class="fa-solid fa-trash text-xs"></i>
+                                </button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            rowCount.textContent = scannedData.length;
+            totalBadge.textContent = scannedData.length;
+        }
+
+        function deleteRow(id) {
+            scannedData = scannedData.filter(item => item.id !== id);
+            renderTable();
+            showToast("Row removed", "info");
+        }
+
+        // --- Excel Export (SheetJS) ---
+        function exportToExcel() {
+            if (!scannedData.length) {
+                showToast("No data to export", "error");
+                return;
+            }
+
+            const headers = ["Timestamp"];
+            for (let i = 0; i < maxColumns; i++) {
+                headers.push(i === 0 ? "ID / Key" : `Field ${i + 1}`);
+            }
+
+            const exportRows = scannedData.map(item => {
+                const row = { "Timestamp": item.timestamp };
+                for (let i = 0; i < maxColumns; i++) {
+                    const h = i === 0 ? "ID / Key" : `Field ${i + 1}`;
+                    row[h] = item.fields[i] !== undefined ? item.fields[i] : '';
+                }
+                return row;
+            });
+
+            const worksheet = XLSX.utils.json_to_sheet(exportRows, { header: headers });
+            const workbook = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(workbook, worksheet, "QR Data");
+
+            const filename = `QR_Scans_${new Date().toISOString().slice(0, 10)}.xlsx`;
+            XLSX.writeFile(workbook, filename);
+            showToast("Excel sheet downloaded!", "success");
+        }
+
+        // --- Listeners & Helpers ---
+        function setupEventListeners() {
+            startBtn.addEventListener('click', startScanner);
+            stopBtn.addEventListener('click', stopScanner);
+
+            fileInput.addEventListener('change', e => {
+                if (!e.target.files.length) return;
+                const file = e.target.files[0];
+                const qr = new Html5Qrcode("reader");
+                qr.scanFile(file, true)
+                    .then(text => {
+                        processScannedText(text);
+                        fileInput.value = '';
+                    })
+                    .catch(() => {
+                        showToast("No QR code found in image", "error");
+                        fileInput.value = '';
+                    });
+            });
+
+            exportBtn.addEventListener('click', exportToExcel);
+
+            clearBtn.addEventListener('click', () => {
+                if (!scannedData.length) return;
+                if (confirm("Clear all scanned records?")) {
+                    scannedData = [];
+                    maxColumns = 3;
+                    renderTable();
+                    showToast("Table cleared", "info");
+                }
+            });
+
+            dupDiscardBtn.addEventListener('click', () => {
+                duplicateModal.classList.add('hidden');
+                pendingDuplicate = null;
+                showToast("Duplicate discarded", "info");
+            });
+
+            dupAddBtn.addEventListener('click', () => {
+                if (pendingDuplicate) {
+                    addRecord(pendingDuplicate.terms);
+                    showToast("Duplicate added", "warning");
+                }
+                duplicateModal.classList.add('hidden');
+                pendingDuplicate = null;
+            });
+
+            toggleAudioBtn.addEventListener('click', () => {
+                audioEnabled = !audioEnabled;
+                audioIcon.className = audioEnabled ? "fa-solid fa-volume-high text-emerald-400" : "fa-solid fa-volume-xmark text-slate-500";
+                showToast(audioEnabled ? "Sound Enabled" : "Sound Muted", "info");
+            });
+        }
+
+        function showToast(msg, type = "success") {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toast-msg');
+            const toastIcon = document.getElementById('toast-icon');
+
+            toastMsg.textContent = msg;
+
+            if (type === 'success') toastIcon.className = "fa-solid fa-circle-check text-emerald-400";
+            else if (type === 'error') toastIcon.className = "fa-solid fa-circle-xmark text-rose-400";
+            else if (type === 'warning') toastIcon.className = "fa-solid fa-triangle-exclamation text-amber-400";
+            else toastIcon.className = "fa-solid fa-circle-info text-indigo-400";
+
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+
+            setTimeout(() => {
+                toast.classList.remove('translate-y-0', 'opacity-100');
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 2500);
+        }
+
+        function escapeHTML(str) {
+            return String(str).replace(/[&<>"']/g, m => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+            })[m]);
+        }
+    </script>
+</body>
+</html>
